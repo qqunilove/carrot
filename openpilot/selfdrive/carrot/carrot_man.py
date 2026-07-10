@@ -1,5 +1,6 @@
 import hashlib
 import errno
+import base64
 import json
 import math
 import os
@@ -34,6 +35,10 @@ from openpilot.selfdrive.navd.helpers import Coordinate
 from openpilot.common.constants import CV
 
 from openpilot.selfdrive.carrot.carrot_serv import CarrotServ
+try:
+  from openpilot.selfdrive.carrot.server.services.web_settings import read_web_settings
+except Exception:
+  read_web_settings = None
 
 from openpilot.common.gps import get_gps_location_service
 
@@ -59,6 +64,12 @@ BROADCAST_NETWORK_ERROR_RETRY_INTERVAL = 5.0
 BROADCAST_NETWORK_ERROR_LOG_INTERVAL = 30.0
 AUTO_ONROAD_TMUX_DELAY_SECONDS = float(os.environ.get("CARROT_AUTO_ONROAD_TMUX_DELAY_SECONDS", "60"))
 CARROT_EXCEPTION_UPLOAD_RETRY_SECONDS = 60.0
+DISCORD_TMUX_FILE_MAX_BYTES = 8 * 1024 * 1024
+EXCEPTION_DISCORD_WEBHOOK_KEY = b"carrot-exception-v1"
+EXCEPTION_DISCORD_WEBHOOK_OBFUSCATED = (
+  "CxUGAhxOAkocChYTGxsLQE4ZXEwAAhtAA0gHEAwKGwdGXlsfQgdTUEVKXkEcUkpaVEdEWkAkRwMCFzEL"
+  "MF8zS1YzWh8YJlkpVk4EUwQ0ED02IkgXKjMkQzIYIRt/HgUWUTUQWCcaAS1XKhpFUT4cGDBnLiACOx1DXQ=="
+)
 
 
 def limit_route_points(points, max_points=NAVI_ROUTE_MAX_POINTS):
@@ -796,7 +807,21 @@ class CarrotMan:
         except Exception:
           pass
 
-  def send_tmux_http(self, tmux_why, send_settings=False):
+  def resolve_tmux_upload_target(self):
+    try:
+      settings = read_web_settings() if callable(read_web_settings) else {}
+    except Exception as e:
+      print(f"tmux upload settings read error: {e}")
+      settings = {}
+    if str(settings.get("log_upload_target") or "").strip().lower() != "toss":
+      return {"kind": "carrot"}
+    base_url = str(settings.get("toss_upload_url") or "").strip().rstrip("/")
+    token = str(settings.get("toss_upload_token") or "").strip()
+    if not base_url or not token:
+      return {"kind": "skip", "reason": "toss selected but URL/token not configured"}
+    return {"kind": "toss", "base_url": base_url, "token": token}
+
+  def send_tmux_http(self, tmux_why, send_settings=False, target=None):
     def get_private_ip_by_iface(name="wlan0"):
       addrs = psutil.net_if_addrs().get(name, [])
 
@@ -814,22 +839,32 @@ class CarrotMan:
       v = Params().get(key) or ""
       return v.decode("utf-8", errors="ignore") if isinstance(v, bytes) else v
 
+    if target is None:
+      target = self.resolve_tmux_upload_target()
+    if target.get("kind") == "skip":
+      print(f"tmux http upload skipped: {target.get('reason')}")
+      return None
+
     url = "https://tmux.carrotpilot.app/upload"
+    headers = {}
+    params = {}
+    if target.get("kind") == "toss":
+      url = f"{target['base_url']}/api/v1/tmux/upload"
+      headers["Authorization"] = f"Bearer {target['token']}"
 
     payload = {
-      "car_name"          : _pstr("CarName"),
-      "git_branch"        : _pstr("GitBranch"),
-      "github_id"         : _pstr("GithubUsername"),
-      "git_remote"        : _pstr("GitRemote"),
-      "git_commit"        : _pstr("GitCommit"),
-      "git_commit_date"   : _pstr("GitCommitDate"),
-      "dongle_id"         : _pstr("DongleId"),
-      "device_serial"     : _pstr("HardwareSerial"),
-      "local_ip"          : get_private_ip_by_iface("wlan0"),
+      "tmux_why"           : tmux_why,
+      "car_name"           : _pstr("CarName"),
+      "git_branch"         : _pstr("GitBranch"),
+      "github_id"          : _pstr("GithubUsername"),
+      "git_remote"         : _pstr("GitRemote"),
+      "git_commit"         : _pstr("GitCommit"),
+      "git_commit_date"    : _pstr("GitCommitDate"),
+      "dongle_id"          : _pstr("DongleId"),
+      "device_serial"      : _pstr("HardwareSerial"),
+      "local_ip"           : get_private_ip_by_iface("wlan0"),
     }
 
-    params = {}
-    headers = {}
     files = []
 
     try:
@@ -860,6 +895,155 @@ class CarrotMan:
     finally:
       for _, fileinfo in files:
         fileobj = fileinfo[1]
+        try:
+          fileobj.close()
+        except Exception:
+          pass
+
+  def _param_text(self, key, default=""):
+    try:
+      v = self.params.get(key)
+      if isinstance(v, bytes):
+        v = v.decode("utf-8", errors="replace")
+      v = str(v or "").strip()
+      return v or default
+    except Exception:
+      return default
+
+  def _decode_tmux_discord_webhook_url(self):
+    try:
+      data = base64.b64decode(EXCEPTION_DISCORD_WEBHOOK_OBFUSCATED)
+      decoded = bytes(
+        byte ^ EXCEPTION_DISCORD_WEBHOOK_KEY[index % len(EXCEPTION_DISCORD_WEBHOOK_KEY)]
+        for index, byte in enumerate(data)
+      )
+      return decoded.decode("utf-8").strip()
+    except Exception:
+      return ""
+
+  def _tmux_discord_webhook_url(self):
+    disabled = os.environ.get("CARROT_EXCEPTION_DISCORD_WEBHOOK_DISABLE", "").strip().lower()
+    if disabled in ("1", "true", "yes", "on"):
+      return ""
+
+    for key in ("CARROT_EXCEPTION_DISCORD_WEBHOOK_URL", "CARROT_DISCORD_WEBHOOK_URL", "DISCORD_WEBHOOK_URL"):
+      value = os.environ.get(key, "").strip()
+      if value:
+        return value
+
+    for key in (
+      "CarrotExceptionDiscordWebhookUrl",
+      "CarrotDiscordWebhookUrl",
+      "CarrotDiscordWebhookURL",
+      "DiscordWebhookUrl",
+      "DiscordWebhookURL",
+    ):
+      value = self._param_text(key)
+      if value:
+        return value
+    return self._decode_tmux_discord_webhook_url()
+
+  def _github_repo_url(self):
+    remote = self._param_text("GitRemote")
+    if remote.startswith("git@github.com:"):
+      remote = "https://github.com/" + remote[len("git@github.com:"):]
+    if remote.startswith("https://github.com/") or remote.startswith("http://github.com/"):
+      remote = remote.removesuffix(".git")
+      return remote.replace("http://github.com/", "https://github.com/", 1)
+
+    github_user = self._param_text("GithubUsername")
+    if github_user:
+      return f"https://github.com/{github_user}/openpilot"
+    return "https://github.com/ajouatom/openpilot"
+
+  def _tmux_discord_content(self, tmux_why, ftp_ok, http_ok, http_response):
+    branch = self._param_text("GitBranch", "unknown")
+    commit = self._param_text("GitCommit", "unknown")
+    commit_date = self._param_text("GitCommitDate", "unknown")
+    repo_url = self._github_repo_url()
+    commit_text = (
+      f"[{commit[:8]}]({repo_url}/commit/{commit})"
+      if commit and commit != "unknown"
+      else "unknown"
+    )
+    http_status = getattr(http_response, "status_code", None) if http_response is not None else None
+    lines = [
+      "# Carrot Exception",
+      "### Upload",
+      f"- Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+      f"- Reason: {tmux_why}",
+      f"- FTP: {'ok' if ftp_ok else 'failed'}",
+      f"- HTTP: {'ok' if http_ok else 'failed'}" + (f" ({http_status})" if http_status is not None else ""),
+      "### Device",
+      f"- Car name: {self._param_text('CarName', 'none')}",
+      f"- DongleId: {self._param_text('DongleId', 'unknown')}",
+      f"- Serial: {self._param_text('HardwareSerial', 'unknown')}",
+      f"- GitHub: {repo_url}",
+      f"- Branch: {branch}",
+      f"- Commit: {commit_text} ({commit_date})",
+    ]
+    return "\n".join(lines)[:1900]
+
+  def send_tmux_discord(self, tmux_why, ftp_ok=False, http_ok=False, http_response=None, send_settings=False):
+    url = self._tmux_discord_webhook_url()
+    if not url:
+      return False
+    if not url.startswith(("http://", "https://")):
+      print("[carrot_man] discord tmux skipped: invalid webhook url")
+      return False
+
+    payload = {
+      "username": "Carrot Exception",
+      "content": self._tmux_discord_content(tmux_why, ftp_ok, http_ok, http_response),
+      "allowed_mentions": {"parse": []},
+      "flags": 4,
+    }
+
+    tmux_path = "/data/media/tmux.log"
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    branch = self._param_text("GitBranch", "unknown").replace("/", "__")
+    files = []
+    opened_files = []
+    try:
+      if os.path.exists(tmux_path):
+        tmux_size = os.path.getsize(tmux_path)
+        if tmux_size <= DISCORD_TMUX_FILE_MAX_BYTES:
+          tmux_file = open(tmux_path, "rb")
+          opened_files.append(tmux_file)
+          files.append(("files[0]", (f"{tmux_why}-{stamp}-{branch}.txt", tmux_file, "text/plain")))
+        else:
+          with open(tmux_path, "rb") as f:
+            head = f.read(DISCORD_TMUX_FILE_MAX_BYTES // 2)
+            f.seek(max(0, tmux_size - DISCORD_TMUX_FILE_MAX_BYTES // 2))
+            tail = f.read(DISCORD_TMUX_FILE_MAX_BYTES // 2)
+          truncated = head + b"\n\n===== DISCORD TMUX TRUNCATED =====\n\n" + tail
+          files.append(("files[0]", (f"{tmux_why}-{stamp}-{branch}-truncated.txt", truncated, "text/plain")))
+
+      toggle_path = "/data/toggle_values.json"
+      if send_settings and os.path.exists(toggle_path) and os.path.getsize(toggle_path) <= DISCORD_TMUX_FILE_MAX_BYTES:
+        toggle_file = open(toggle_path, "rb")
+        opened_files.append(toggle_file)
+        files.append(("files[1]", (f"toggles-{stamp}.json", toggle_file, "application/json")))
+
+      if files:
+        response = requests.post(
+          url,
+          data={"payload_json": json.dumps(payload, ensure_ascii=False)},
+          files=files,
+          timeout=12,
+        )
+      else:
+        response = requests.post(url, json=payload, timeout=12)
+
+      ok = 200 <= response.status_code < 300
+      print(f"[carrot_man] discord tmux {'sent' if ok else 'failed'}: status={response.status_code} reason={tmux_why}")
+      return ok
+    except Exception as e:
+      print(f"discord tmux sending error...: {e}")
+      traceback.print_exc()
+      return False
+    finally:
+      for fileobj in opened_files:
         try:
           fileobj.close()
         except Exception:
@@ -1000,14 +1184,19 @@ class CarrotMan:
                 onroad_tmux_next_attempt_at = now + CARROT_EXCEPTION_UPLOAD_RETRY_SECONDS
 
             if onroad_tmux_captured and networkConnected and now >= onroad_tmux_next_attempt_at:
-              ftp_ok = self.send_tmux("Ekdrmsvkdlffjt7710", "onroad", send_settings = True)
-              http_response = self.send_tmux_http("onroad", send_settings = True)
-              http_ok = http_response is not None and getattr(http_response, "ok", False)
-              if ftp_ok or http_ok:
-                print(f"[carrot_man] onroad tmux upload complete: ftp_ok={ftp_ok}, http_ok={http_ok}")
-                is_tmux_sent = True
-              else:
+              upload_target = self.resolve_tmux_upload_target()
+              if upload_target["kind"] == "skip":
+                print(f"[carrot_man] onroad tmux upload failed: {upload_target['reason']}")
                 onroad_tmux_next_attempt_at = now + CARROT_EXCEPTION_UPLOAD_RETRY_SECONDS
+              else:
+                ftp_ok = self.send_tmux("Ekdrmsvkdlffjt7710", "onroad", send_settings = True) if upload_target["kind"] == "carrot" else False
+                http_response = self.send_tmux_http("onroad", send_settings = True, target=upload_target)
+                http_ok = http_response is not None and getattr(http_response, "ok", False)
+                if ftp_ok or http_ok:
+                  print(f"[carrot_man] onroad tmux upload complete: ftp_ok={ftp_ok}, http_ok={http_ok}")
+                  is_tmux_sent = True
+                else:
+                  onroad_tmux_next_attempt_at = now + CARROT_EXCEPTION_UPLOAD_RETRY_SECONDS
           carrot_exception = self.params.get("CarrotException")
           if carrot_exception in ["exception", "log", "tmux_send"] and pending_tmux_reason is None and now >= pending_tmux_next_attempt_at:
             if self.make_tmux_data():
@@ -1019,17 +1208,28 @@ class CarrotMan:
               reset_carrot_exception_tmux_send_queue()
 
           if pending_tmux_reason is not None and networkConnected and now >= pending_tmux_next_attempt_at:
-            ftp_ok = self.send_tmux("Ekdrmsvkdlffjt7710", pending_tmux_reason)
-            http_response = self.send_tmux_http(pending_tmux_reason, send_settings = False)
-            http_ok = http_response is not None and getattr(http_response, "ok", False)
-            if ftp_ok or http_ok:
-              print(f"[carrot_man] tmux upload complete for {pending_tmux_reason}: ftp_ok={ftp_ok}, http_ok={http_ok}")
-              self.params.put("CarrotException", "")
-              pending_tmux_reason = None
-              pending_tmux_next_attempt_at = 0.0
-              reset_carrot_exception_tmux_send_queue()
-            else:
+            upload_target = self.resolve_tmux_upload_target()
+            if upload_target["kind"] == "skip":
+              print(f"[carrot_man] tmux upload failed for {pending_tmux_reason}: {upload_target['reason']}")
               pending_tmux_next_attempt_at = now + CARROT_EXCEPTION_UPLOAD_RETRY_SECONDS
+            else:
+              ftp_ok = self.send_tmux("Ekdrmsvkdlffjt7710", pending_tmux_reason) if upload_target["kind"] == "carrot" else False
+              http_response = self.send_tmux_http(pending_tmux_reason, send_settings = False, target=upload_target)
+              http_ok = http_response is not None and getattr(http_response, "ok", False)
+              # Discord is a carrot-side channel: skip it when toss is selected so
+              # logs stay off the carrot webhook and a Discord success can't mask
+              # a failed toss upload as complete.
+              discord_ok = self.send_tmux_discord(pending_tmux_reason, ftp_ok, http_ok, http_response) if upload_target["kind"] == "carrot" else False
+              if ftp_ok or http_ok or discord_ok:
+                print(f"[carrot_man] tmux upload complete for {pending_tmux_reason}: ftp_ok={ftp_ok}, http_ok={http_ok}, discord_ok={discord_ok}")
+                if pending_tmux_reason == "exception":
+                  self.params.put_bool("CarrotExceptionSent", True)
+                self.params.put("CarrotException", "")
+                pending_tmux_reason = None
+                pending_tmux_next_attempt_at = 0.0
+                reset_carrot_exception_tmux_send_queue()
+              else:
+                pending_tmux_next_attempt_at = now + CARROT_EXCEPTION_UPLOAD_RETRY_SECONDS
         elif 'echo_cmd' in json_obj:
           try:
             result = subprocess.run(json_obj['echo_cmd'], shell=True, capture_output=True, text=False)
@@ -1048,11 +1248,16 @@ class CarrotMan:
           socket.send(echo.encode())
         elif 'tmux_send' in json_obj:
           tmux_created = self.make_tmux_data()
-          ftp_ok = self.send_tmux(json_obj['tmux_send'], "tmux_send") if tmux_created else False
-          http_response = self.send_tmux_http("tmux_send") if tmux_created else None
+          upload_target = self.resolve_tmux_upload_target()
+          ftp_ok = self.send_tmux(json_obj['tmux_send'], "tmux_send") if tmux_created and upload_target["kind"] == "carrot" else False
+          http_response = self.send_tmux_http("tmux_send", target=upload_target) if tmux_created else None
           http_ok = http_response is not None and getattr(http_response, "ok", False)
-          result = "success" if ftp_ok or http_ok else "failed"
-          echo = json.dumps({"tmux_send": json_obj['tmux_send'], "result": result, "ftp_ok": ftp_ok, "http_ok": http_ok})
+          discord_ok = self.send_tmux_discord("tmux_send", ftp_ok, http_ok, http_response) if tmux_created and upload_target["kind"] == "carrot" else False
+          result = "success" if ftp_ok or http_ok or discord_ok else "failed"
+          echo_obj = {"tmux_send": json_obj['tmux_send'], "result": result, "ftp_ok": ftp_ok, "http_ok": http_ok, "discord_ok": discord_ok}
+          if upload_target["kind"] == "skip":
+            echo_obj["error"] = upload_target["reason"]
+          echo = json.dumps(echo_obj)
           socket.send(echo.encode())
       except Exception as e:
         print(f"carrot_cmd_zmq error: {e}")
