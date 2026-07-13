@@ -58,6 +58,8 @@ class RouteOverlay:
     video_height: int = 0
     video_frame_id: str | None = None
     video_status: str | None = None
+    panel_visible: bool = True
+    cutin_status: str | None = None
     data_lines: tuple[str, ...] = ()
 
 
@@ -131,6 +133,7 @@ class DetectedVehicle:
     ttc_s: float | None = None
     x_std_m: float | None = None
     y_std_m: float | None = None
+    radar_track_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,6 +216,7 @@ class ClusterUiState:
     surround_pitch_deg: float
     surround_view_active: bool
     lanes: tuple[LaneMarking, ...]
+    onroad: bool = False
     camera_view_mode: int = 0
     extra_left_lane_visible: bool = False
     extra_right_lane_visible: bool = False
@@ -272,6 +276,8 @@ class ClusterUiState:
     vision_yaw_rate_rps: float | None = None
     vision_speed_std_mps: float | None = None
     vision_yaw_rate_std_rps: float | None = None
+    camera_device_type: str | None = None
+    camera_sensor: str | None = None
     camera_calibration_euler: tuple[float, float, float] | None = None
     road_transform_trans: tuple[float, float, float] | None = None
     road_transform_std: tuple[float, float, float] | None = None

@@ -79,7 +79,9 @@ LIVE_SERVICES_BASE = (
     "carControl",
     "carOutput",
     "deviceState",
+    "roadCameraState",
     "cameraOdometry",
+    "liveCalibration",
     "drivingModelData",
     "liveDelay",
     "liveParameters",
@@ -273,6 +275,8 @@ class OpenpilotLiveSource:
         return self.last_state
 
     def _with_live_hud_state(self, state: ClusterUiState) -> ClusterUiState:
+        device_state = self._service_data("deviceState")
+        onroad = self._service_alive("deviceState") and bool(safe_get(device_state, "started", False))
         car_state = self._service_data("carState")
         fuel_gauge = safe_optional_float(car_state, "fuelGauge")
         if fuel_gauge is None or not 0.0 < fuel_gauge <= 1.0:
@@ -356,6 +360,7 @@ class OpenpilotLiveSource:
 
         return replace(
             state,
+            onroad=onroad,
             external_nav_active=external_nav_active,
             steering_output=steering_output,
             steering_output_normalized=steering_output_normalized,
@@ -445,8 +450,14 @@ class OpenpilotLiveSource:
             self.parser._update_selfdrive_state(data)
         elif service == "carControl":
             self.parser._update_car_control(data)
+        elif service == "deviceState":
+            self.parser._update_device_state(data)
+        elif service == "roadCameraState":
+            self.parser._update_road_camera_state(data)
         elif service == "cameraOdometry":
             self.parser._update_camera_odometry(data, self._service_valid(service))
+        elif service == "liveCalibration":
+            self.parser._update_live_calibration(data, self._service_valid(service))
         elif service == "carParams":
             self.parser._update_car_params(data)
         elif service == "radarState":
