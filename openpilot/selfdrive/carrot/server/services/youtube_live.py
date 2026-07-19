@@ -62,8 +62,8 @@ NET_CHECK_DOWN_INTERVAL_SECONDS = 2.0
 
 _PROCESS_MATCHES = {
   "carrot_cluster": "selfdrive.carrot.cluster_autorun",
-  "webrtcd": "system.webrtc.webrtcd",
-  "stream_encoderd": "encoderd\x00--stream",
+  "webrtcd": "system.webrtc.carrot_webrtcd",
+  "stream_encoderd": "encoderd\x00--carrot-vision-road",
   "youtube_low_encoderd": "encoderd\x00--youtube-low",
   "youtube_medium_encoderd": "encoderd\x00--youtube-medium",
   "youtube_encoderd": "encoderd\x00--youtube\x00",
@@ -1077,7 +1077,7 @@ class YouTubeLiveService:
     selected_process = processes.get(selected_youtube_encoder, {"running": False, "pids": []})
     return {
       "cluster": {
-        "enabled": cluster_param in (1, 2),
+        "enabled": cluster_param == 1,
         "param": cluster_param,
         **processes.get("carrot_cluster", {"running": False, "pids": []}),
       },

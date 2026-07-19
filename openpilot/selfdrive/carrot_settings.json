@@ -399,7 +399,8 @@
           "zh": "雷达",
           "params": [
             "EnableRadarTracks",
-            "EnableCornerRadar"
+            "EnableCornerRadar",
+            "RadarLeadModelMode"
           ]
         },
         {
@@ -454,7 +455,6 @@
           "en": "Path Display",
           "zh": "路径显示",
           "params": [
-            "CarrotTireTrajectory",
             "ShowPathMode",
             "ShowPathColor",
             "ShowPathColorCruiseOff",
@@ -489,7 +489,8 @@
                 "ClusterHudMirror",
                 "ClusterHudTheme",
                 "ClusterNaviMapTheme",
-                "ClusterNaviMapType"
+                "ClusterNaviMapType",
+                "ClusterNaviMapFps"
               ]
             },
             {
@@ -2121,22 +2122,6 @@
     },
     {
       "group": "화면패스",
-      "name": "CarrotTireTrajectory",
-      "title": "타이어 궤적 표시(0)",
-      "descr": "타이어 궤적 그라데이션 표시 여부를 설정합니다.\n 0: 끄기\n 1: 켜기",
-      "egroup": "DISP",
-      "etitle": "Tire Trajectory",
-      "edescr": "Shows the tire trajectory gradient on the screen.\n 0: Off, 1: On",
-      "cgroup": "显示设置",
-      "ctitle": "显示轮胎轨迹",
-      "cdescr": "显示轮胎轨迹。0: 关闭, 1: 开启",
-      "min": 0,
-      "max": 1,
-      "default": 0,
-      "unit": 1
-    },
-    {
-      "group": "화면패스",
       "name": "ShowPathMode",
       "title": "패스종류,레인리스(9)",
       "descr": "0:일반,1,2:사각,3,4:^^,5,6:사각,7,8:^^,9,10,11:smooth^^,12:smooth2^^,13:3줄,14:2줄,15:1줄",
@@ -2472,6 +2457,22 @@
       "unit": 1
     },
     {
+      "group": "레이더",
+      "name": "RadarLeadModelMode",
+      "title": "레이더 리드 방식(0)",
+      "descr": "0: 기존 방식\n1: 독립 하이브리드 (vision-radar leadOne + 모델 cut-in/external, 차량 재시동 또는 기기 재부팅 후 적용)",
+      "egroup": "RADAR",
+      "etitle": "Radar lead method(0)",
+      "edescr": "0: Legacy\n1: Independent hybrid (vision-radar leadOne + model cut-in/external; applied after an ignition cycle or device reboot)",
+      "cgroup": "RADAR",
+      "ctitle": "Radar lead method(0)",
+      "cdescr": "0: 传统方式\n1: 模型方式（车辆重新启动或设备重启后生效）",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": 1
+    },
+    {
       "group": "시작",
       "name": "HotspotOnBoot",
       "title": "부팅시 핫스팟켜기",
@@ -2695,17 +2696,17 @@
     {
       "group": "주행튜닝",
       "name": "StoppingAccel",
-      "title": "정지시작가속도x0.01(0)",
+      "title": "정지시작가속도x0.01(-50)",
       "descr": "정지시작가속도 조정, 0: 기존방식",
       "egroup": "LONG",
-      "etitle": "StoppingStartAccelx0.01(0)",
+      "etitle": "StoppingStartAccelx0.01(-50)",
       "edescr": "stopping acceleration, 0: Traditional method",
       "cgroup": "纵向控制",
-      "ctitle": "停止起步加速度 x0.01(0)",
+      "ctitle": "停止起步加速度 x0.01(-50)",
       "cdescr": "停止加速度，0: 传统方式",
       "min": -100,
       "max": 0,
-      "default": 0,
+      "default": -50,
       "unit": 10
     },
     {
@@ -2968,15 +2969,15 @@
       "group": "외부 HUD",
       "name": "ClusterHud",
       "title": "외부 HUD 활성화(0)",
-      "descr": "0: 끄기\n1: TURZX 9.2인치\n2: TURZX 12.3인치",
+      "descr": "0: 끄기\n1: TURZX 9.2인치",
       "egroup": "CLUSTER HUD",
       "etitle": "External HUD Display(0)",
-      "edescr": "0: Off\n1: TURZX 9.2 inch\n2: TURZX 12.3 inch",
+      "edescr": "0: Off\n1: TURZX 9.2 inch",
       "cgroup": "外部 HUD",
       "ctitle": "外部 HUD 显示(0)",
-      "cdescr": "0: 关闭\n1: TURZX 9.2 英寸\n2: TURZX 12.3 英寸",
+      "cdescr": "0: 关闭\n1: TURZX 9.2 英寸",
       "min": 0,
-      "max": 2,
+      "max": 1,
       "default": 0,
       "unit": 1
     },
@@ -3094,6 +3095,22 @@
     },
     {
       "group": "외부 HUD",
+      "name": "ClusterNaviMapFps",
+      "title": "클러스터 내비 지도 FPS(1)",
+      "descr": "0: 5 FPS\n1: 10 FPS(기본)\n2: 20 FPS\n3: 30 FPS\nHUD FPS와는 별개이며 지도 비트레이트는 자동 설정됩니다.\n변경하면 외부 내비가 자동으로 다시 연결됩니다.",
+      "egroup": "CLUSTER HUD",
+      "etitle": "Cluster Navi Map FPS(1)",
+      "edescr": "0: 5 FPS\n1: 10 FPS (default)\n2: 20 FPS\n3: 30 FPS\nThis is independent of HUD FPS and map bitrate is selected automatically.\nThe external navigation app reconnects automatically when changed.",
+      "cgroup": "外部 HUD",
+      "ctitle": "集群导航地图 FPS(1)",
+      "cdescr": "0: 5 FPS\n1: 10 FPS（默认）\n2: 20 FPS\n3: 30 FPS\n此设置独立于 HUD FPS，地图比特率自动设置。\n更改后外部导航应用会自动重新连接。",
+      "min": 0,
+      "max": 3,
+      "default": 1,
+      "unit": 1
+    },
+    {
+      "group": "외부 HUD",
       "name": "ClusterHudLiveFps",
       "title": "외부 HUD 라이브 FPS 제한(1)",
       "descr": "0: 무제한(진단용)\n1: 10 FPS(기본)\n2: 20 FPS\n3: 30 FPS\n4: 40 FPS\n5: 50 FPS\n6: 60 FPS",
@@ -3176,13 +3193,13 @@
       "group": "외부 HUD",
       "name": "ClusterHudCoreMode",
       "title": "외부 HUD CPU 코어 지정(0)",
-      "descr": "CLUSTER_REALTIME=1일 때만 적용\n0: 1,2,3,4\n1: 모든 코어\n변경 시 클러스터 HUD를 재시작합니다.",
+      "descr": "0: 1,2,3,4\n1: 모든 코어\n변경 시 클러스터 HUD를 재시작합니다.",
       "egroup": "CLUSTER HUD",
       "etitle": "External HUD CPU Core Mode(0)",
-      "edescr": "Applies only when CLUSTER_REALTIME=1\n0: cores 1,2,3,4\n1: all cores\nChanging this restarts the cluster HUD process.",
+      "edescr": "0: cores 1,2,3,4\n1: all cores\nChanging this restarts the cluster HUD process.",
       "cgroup": "外部 HUD",
       "ctitle": "External HUD CPU Core Mode(0)",
-      "cdescr": "Applies only when CLUSTER_REALTIME=1\n0: cores 1,2,3,4\n1: all cores\nChanging this restarts the cluster HUD process.",
+      "cdescr": "0: cores 1,2,3,4\n1: all cores\nChanging this restarts the cluster HUD process.",
       "min": 0,
       "max": 1,
       "default": 0,
@@ -3192,13 +3209,13 @@
       "group": "외부 HUD",
       "name": "ClusterHudPriority",
       "title": "외부 HUD 실시간 우선순위(10)",
-      "descr": "CLUSTER_REALTIME=1일 때만 적용\n1-99\n기본 10\n변경 시 클러스터 HUD를 재시작합니다.",
+      "descr": "1-99\n기본 10\n변경 시 클러스터 HUD를 재시작합니다.",
       "egroup": "CLUSTER HUD",
       "etitle": "External HUD Realtime Priority(10)",
-      "edescr": "Applies only when CLUSTER_REALTIME=1\n1-99\nDefault 10\nChanging this restarts the cluster HUD process.",
+      "edescr": "1-99\nDefault 10\nChanging this restarts the cluster HUD process.",
       "cgroup": "外部 HUD",
       "ctitle": "External HUD Realtime Priority(10)",
-      "cdescr": "Applies only when CLUSTER_REALTIME=1\n1-99\nDefault 10\nChanging this restarts the cluster HUD process.",
+      "cdescr": "1-99\nDefault 10\nChanging this restarts the cluster HUD process.",
       "min": 1,
       "max": 99,
       "default": 10,
