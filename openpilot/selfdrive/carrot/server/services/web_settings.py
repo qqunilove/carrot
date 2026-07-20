@@ -6,14 +6,16 @@ import re
 import threading
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from openpilot.selfdrive.carrot.web_upload import DEFAULT_TOSS_UPLOAD_URL, DEFAULT_WEB_UPLOAD_URL, normalize_base_url
+
 from ..config import CARROT_WEB_SETTINGS_PATH, WEB_DIR
 
 
 WEB_PRIMARY_PAGES = {"last", "carrot", "setting", "tools", "logs", "terminal"}
 WEB_LANGUAGES = {"", "en", "ko", "zh"}
-LOG_UPLOAD_TARGETS = {"carrot", "toss"}
 WEB_REPLAY_INSIGHTS_TABS = {"events", "graphs", "sensors", "advanced"}
 WEB_DRIVE_LAYOUT_MODES = {"split", "area_1", "area_2"}
+LOG_UPLOAD_TARGETS = {"carrot", "toss"}
 
 DRIVE_CONTENT_CATALOG_PATH = os.path.join(
   WEB_DIR,
@@ -314,15 +316,30 @@ def _normalize_kmap_url(value: Any) -> str:
   return url or "https://jominki354.github.io/kmap/"
 
 
-def _normalize_toss_url(value: Any) -> str:
-  url = str(value or "").strip().rstrip("/")
-  if url and not url.lower().startswith(("http://", "https://")):
-    url = f"https://{url}"
-  return url
+def _normalize_web_upload_url(value: Any) -> str:
+  try:
+    url = normalize_base_url(value, DEFAULT_WEB_UPLOAD_URL)
+    # Migrate defaults used before the upload receiver moved to its dedicated
+    # HTTPS virtual host. The main shind0 host serves Carrot Web and returns an
+    # HTML 404 for upload API paths.
+    if url.casefold() in {"https://op.wjcloud.kr", "https://shind0.synology.me"}:
+      return DEFAULT_WEB_UPLOAD_URL
+    return url
+  except ValueError:
+    return DEFAULT_WEB_UPLOAD_URL
+
+
+def _normalize_toss_upload_url(value: Any) -> str:
+  try:
+    return normalize_base_url(value, DEFAULT_TOSS_UPLOAD_URL)
+  except ValueError:
+    return DEFAULT_TOSS_UPLOAD_URL
 
 
 def _normalize_stripped(value: Any) -> str:
   return str(value or "").strip()
+
+
 def _normalize_drive_split_ratio(value: Any, fallback: float) -> str:
   try:
     ratio = float(value)
@@ -398,7 +415,10 @@ WEB_SETTINGS_SPEC: List[_Field] = [
   _Field("kmap_map_type", "enum", "roadmap", choices={"roadmap", "satellite", "hybrid"}),
   _Field("nav_hud_enabled", "bool", True),
   _Field("log_upload_target", "enum", "carrot", choices=LOG_UPLOAD_TARGETS),
-  _Field("toss_upload_url", "str", "https://op.wjcloud.kr", normalize=_normalize_toss_url),
+  # Keep the upstream Carrot Web API configuration intact. Toss remains an
+  # additional target with independent credentials.
+  _Field("web_upload_url", "str", DEFAULT_WEB_UPLOAD_URL, normalize=_normalize_web_upload_url),
+  _Field("toss_upload_url", "str", DEFAULT_TOSS_UPLOAD_URL, normalize=_normalize_toss_upload_url),
   _Field("toss_upload_token", "str", "", normalize=_normalize_stripped),
   # Remote support last-used settings, persisted so the owner's choices survive a
   # reload. Stored as strings via the enum type (numeric values are parsed back
@@ -413,7 +433,6 @@ _SPEC_BY_KEY: Dict[str, _Field] = {f.key: f for f in WEB_SETTINGS_SPEC}
 
 # Derived from the spec so there is no second list of defaults to keep in sync.
 DEFAULT_WEB_SETTINGS: Dict[str, Any] = {f.key: f.default for f in WEB_SETTINGS_SPEC}
-
 
 
 def sanitize_web_settings(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:

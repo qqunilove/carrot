@@ -7,6 +7,8 @@ from urllib.parse import quote
 
 from aiohttp import web
 
+from openpilot.selfdrive.carrot.web_upload import check_web_upload_health, create_web_upload_session
+
 from ...config import DASHCAM_ROOT
 from . import upload, upload_jobs
 from .catalog import (
@@ -474,6 +476,21 @@ async def api_dashcam_upload_start(request: web.Request) -> web.Response:
     return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
+async def api_dashcam_upload_test(request: web.Request) -> web.Response:
+  try:
+    target = upload.resolve_upload_target()
+    if target["kind"] == "toss" and not target["token"]:
+      raise RuntimeError("Toss upload token is not configured")
+    result = await check_web_upload_health(target["base_url"], target["token"])
+    if result.get("ok") and target["kind"] == "carrot" and not target["token"]:
+      await create_web_upload_session(target["base_url"], upload.current_upload_metadata(), "test")
+      result["session"] = "automatic"
+    status = 200 if result.get("ok") else 502
+    return web.json_response({"target": target["kind"], "url": target["base_url"], **result}, status=status)
+  except Exception as e:
+    return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
 async def api_dashcam_upload_job(request: web.Request) -> web.Response:
   job_id = (request.query.get("id") or request.match_info.get("job_id") or "").strip()
   if not job_id:
@@ -482,20 +499,6 @@ async def api_dashcam_upload_job(request: web.Request) -> web.Response:
   if not job:
     return web.json_response({"ok": False, "error": "job not found"}, status=404)
   return web.json_response(upload_jobs.snapshot(job))
-
-
-async def api_dashcam_upload_test(request: web.Request) -> web.Response:
-  try:
-    base_url, token = upload.toss_settings()
-    if not base_url:
-      return web.json_response({"ok": False, "error": "Toss server URL is not configured"}, status=400)
-    if not token:
-      return web.json_response({"ok": False, "error": "Toss server token is not configured"}, status=400)
-    result = await upload.check_toss_health(base_url, token)
-    status = 200 if result.get("ok") else 502
-    return web.json_response({"target": "toss", "url": base_url, **result}, status=status)
-  except Exception as e:
-    return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
 async def api_dashcam_upload_cancel(request: web.Request) -> web.Response:
