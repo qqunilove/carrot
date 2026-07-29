@@ -54,6 +54,7 @@ CLUSTER_ENCODER_SOFTWARE = 3
 CLUSTER_HUD_PARAM = "ClusterHud"
 CLUSTER_HUD_DEBUG_PARAM = "ClusterHudDebug"
 CLUSTER_BRIGHTNESS_PARAM = "ClusterHudBrightness"
+CLUSTER_ORIENTATION_PARAM = "ClusterHudOrientation"
 CLUSTER_ENCODER_PARAM = "ClusterHudEncoder"
 CLUSTER_HUD_MIRROR_PARAM = "ClusterHudMirror"
 CLUSTER_CORE_MODE_PARAM = "ClusterHudCoreMode"
@@ -77,7 +78,7 @@ CLUSTER_SCREEN_MODE_DEBUG = 1
 CLUSTER_SCREEN_MODE_DEBUG_SYSTEM = 2
 CLUSTER_SCREEN_MODE_DEBUG_GRAPH = 3
 CLUSTER_SCREEN_MODE_DEBUG_GRAPH_RIGHT = 4
-CLUSTER_SCREEN_MODE_NAVI_DEBUG = 5
+CLUSTER_SCREEN_MODE_TRIP_REPORT = 5
 CLUSTER_SCREEN_MODE_NAVI = 6
 CLUSTER_SCREEN_MODE_PARAM = "ClusterHudScreenMode"
 CLUSTER_RADAR_INFO_NONE = 0
@@ -143,7 +144,8 @@ LIGHT_CLUSTER_THEME = ClusterTheme(
 DARK_CLUSTER_THEME = ClusterTheme(
     name="dark",
     is_dark=True,
-    bg=(7, 10, 14),
+    # Match the map and disconnected backings on wide external displays.
+    bg=(0, 0, 0),
     panel_bg=(18, 23, 29),
     text=(238, 242, 247),
     muted=(150, 160, 172),
@@ -363,10 +365,11 @@ def normalize_cluster_screen_mode(value: object) -> int:
             "debug_graph": CLUSTER_SCREEN_MODE_DEBUG_GRAPH,
             "debug-graph-right": CLUSTER_SCREEN_MODE_DEBUG_GRAPH_RIGHT,
             "debug_graph_right": CLUSTER_SCREEN_MODE_DEBUG_GRAPH_RIGHT,
-            "navi-debug": CLUSTER_SCREEN_MODE_NAVI_DEBUG,
-            "navi_debug": CLUSTER_SCREEN_MODE_NAVI_DEBUG,
-            "navigation-debug": CLUSTER_SCREEN_MODE_NAVI_DEBUG,
-            "navigation_debug": CLUSTER_SCREEN_MODE_NAVI_DEBUG,
+            "trip-report": CLUSTER_SCREEN_MODE_TRIP_REPORT,
+            "trip_report": CLUSTER_SCREEN_MODE_TRIP_REPORT,
+            "report": CLUSTER_SCREEN_MODE_TRIP_REPORT,
+            "driving-report": CLUSTER_SCREEN_MODE_TRIP_REPORT,
+            "driving_report": CLUSTER_SCREEN_MODE_TRIP_REPORT,
             "navi": CLUSTER_SCREEN_MODE_NAVI,
             "navigation": CLUSTER_SCREEN_MODE_NAVI,
         }
@@ -386,7 +389,7 @@ def normalize_cluster_screen_mode(value: object) -> int:
         CLUSTER_SCREEN_MODE_DEBUG_SYSTEM,
         CLUSTER_SCREEN_MODE_DEBUG_GRAPH,
         CLUSTER_SCREEN_MODE_DEBUG_GRAPH_RIGHT,
-        CLUSTER_SCREEN_MODE_NAVI_DEBUG,
+        CLUSTER_SCREEN_MODE_TRIP_REPORT,
         CLUSTER_SCREEN_MODE_NAVI,
     ):
         return mode
