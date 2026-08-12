@@ -131,6 +131,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"UptimeOnroad", {PERSISTENT, FLOAT, "0.0"}},
     {"UsbGpuPresent", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, BOOL}},
     {"UsbGpuCompiled", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, BOOL}},
+    {"UseWideCamera", {PERSISTENT, BOOL, "1"}},
     {"Version", {PERSISTENT, STRING}},
 
     // carrot
@@ -140,6 +141,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"CarrotNaviDebug", {CLEAR_ON_MANAGER_START, STRING} },
     {"CarrotNaviImage", {CLEAR_ON_MANAGER_START, STRING} },
     {"CarrotNaviWebBootstrapRequest", {CLEAR_ON_MANAGER_START, STRING} },
+    {"CarrotNaviHudMapProfile", {CLEAR_ON_MANAGER_START, INT} },
     {"CarrotVisionActive", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, BOOL} },
     {"TrafficLight", {CLEAR_ON_MANAGER_START, STRING} },
 
@@ -168,6 +170,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"ShowLaneInfo", {PERSISTENT, INT, "1"}},
     {"ShowRadarInfo", {PERSISTENT, INT, "1"}},
     {"ShowDeviceState", {PERSISTENT, INT, "1"}},
+    {"ShowTpms", {PERSISTENT, INT, "1"}},
     {"ShowPathMode", {PERSISTENT, INT, "9"}},
     {"ShowPathColor", {PERSISTENT, INT, "13"}},
     {"ShowPathColorCruiseOff", {PERSISTENT, INT, "19"}},
