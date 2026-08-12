@@ -5,13 +5,26 @@ import pickle
 import shutil
 import struct
 import tempfile
+from collections.abc import Collection
 from pathlib import Path
+from typing import TypeVar
 
 MODELS_DIR = Path(__file__).resolve().parent / 'models'
 TG_INPUT_DEVICES_PATH = MODELS_DIR / 'tg_input_devices.json'
 USBGPU_VID = 0xADD1
 USBGPU_PID = 0x0001
 USBGPU_ENABLE_ENV_VARS = ("USE_USBGPU", "ENABLE_USBGPU")
+VisionStreamT = TypeVar("VisionStreamT")
+
+
+def select_vision_streams(available_streams: Collection[VisionStreamT], road_stream: VisionStreamT,
+                          wide_stream: VisionStreamT, use_wide_camera: bool) -> tuple[VisionStreamT | None, bool]:
+  """Select modeld camera inputs without waiting on a disabled wide camera."""
+  if road_stream in available_streams:
+    return road_stream, use_wide_camera and wide_stream in available_streams
+  if use_wide_camera and wide_stream in available_streams:
+    return wide_stream, False
+  return None, False
 
 
 def _default_tg_input_devices(process_name: str, usbgpu: bool):
@@ -59,14 +72,10 @@ def dump_oob(obj, f):
 def load_oob(f):
   opcodes = f.read(struct.unpack('<q', f.read(8))[0])
   def buffers():
-    prev = None
     while (h := f.read(8)):
-      if prev is not None:
-        prev.release()
-      buf = bytearray(struct.unpack('<q', h)[0])
-      f.readinto(buf)
-      prev = pickle.PickleBuffer(buf)
-      yield prev
+      pb = pickle.PickleBuffer(bytearray(struct.unpack('<q', h)[0]))
+      f.readinto(pb)
+      yield pb
   return pickle.load(io.BytesIO(opcodes), buffers=buffers())
 
 def usbgpu_enabled() -> bool:

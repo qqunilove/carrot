@@ -86,6 +86,13 @@ function start_carrot_web {
 
   [ -f "$watchdog_script" ] || return
 
+  # The watchdog survives tmux/openpilot restarts. The pid file can be lost or
+  # replaced while that old process is still alive, so also check the process
+  # table before starting another watchdog.
+  if command -v pgrep >/dev/null 2>&1 && pgrep -f '[c]arrot_web_watchdog[.]sh' >/dev/null 2>&1; then
+    return
+  fi
+
   if [ -f "$pid_file" ]; then
     local old_pid
     old_pid="$(cat "$pid_file" 2>/dev/null || true)"
@@ -111,12 +118,22 @@ function invalidate_modeld_build_if_needed {
   local driving_pkl_path="$DIR/openpilot/selfdrive/modeld/models/driving_tinygrad.pkl"
   local old_stamp
 
-  MODEL_BUILD_STAMP_VALUE="$(git rev-parse HEAD:openpilot/selfdrive/modeld HEAD:tinygrad_repo HEAD:openpilot/common/file_chunker.py 2>/dev/null | tr '\n' ':')"
+  old_stamp="$(cat "$stamp_path" 2>/dev/null || true)"
+  # Use the same source-only compiler fingerprint as the custom-model
+  # installer. Do not hash the whole models directory: prebuilt releases add
+  # generated PKLs and remove ONNX files, which would make such a stamp
+  # self-invalidating even though the compiler itself did not change.
+  MODEL_BUILD_STAMP_VALUE="$(python3 -c \
+    'from carrot.model_selector.config import compile_env_tag; print(compile_env_tag(), end="")' \
+    2>/dev/null || true)"
   if [ -z "$MODEL_BUILD_STAMP_VALUE" ]; then
-    MODEL_BUILD_STAMP_VALUE="$(git rev-parse HEAD 2>/dev/null || true)"
+    # A prebuilt release has no ONNX inputs to recover from. If Python itself
+    # is unavailable, preserve its packaged artifacts instead of deleting them
+    # because of an unrelated fallback stamp.
+    echo "Unable to calculate model compiler fingerprint; keeping packaged stamp."
+    MODEL_BUILD_STAMP_VALUE="$old_stamp"
   fi
 
-  old_stamp="$(cat "$stamp_path" 2>/dev/null || true)"
   if [ "$MODEL_BUILD_STAMP_VALUE" != "$old_stamp" ] || [ ! -f "$tg_devices_path" ] || { [ ! -f "$driving_pkl_path" ] && [ ! -f "$driving_pkl_path.chunkmanifest" ]; }; then
     echo "Model/tinygrad inputs changed, invalidating generated modeld artifacts."
     rm -f "$DIR"/openpilot/selfdrive/modeld/models/*_tinygrad.pkl*
@@ -218,23 +235,11 @@ function launch {
   rm openpilot/selfdrive/pandad/*.so
   # write tmux scrollback to a file
   tmux capture-pane -pq -S-1500 > /tmp/launch_log
-  if python -c "import flask" > /dev/null 2>&1; then
-    echo "Flask already installed."
-  else
-    echo "Flask installing."
-    pip install flask
-  fi
   if python -c "import shapely" > /dev/null 2>&1; then
     echo "shapely already installed."
   else
     echo "shapely installing."
     pip install shapely
-  fi
-  if python -c "import kaitaistruct" > /dev/null 2>&1; then
-    echo "kaitaistruct already installed."
-  else
-    echo "kaitaistruct installing."
-    pip install kaitaistruct
   fi
   if python3 -c "import msgpack" > /dev/null 2>&1; then
     echo "msgpack already installed."
