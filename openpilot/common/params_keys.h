@@ -93,7 +93,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"Offroad_CarUnrecognized", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, JSON}},
     {"Offroad_ConnectivityNeeded", {CLEAR_ON_MANAGER_START, JSON}},
     {"Offroad_ConnectivityNeededPrompt", {CLEAR_ON_MANAGER_START, JSON}},
-    {"Offroad_ExcessiveActuation", {PERSISTENT, JSON}},
+    {"Offroad_ExcessiveActuation", {CLEAR_ON_MANAGER_START, JSON}},
     {"Offroad_IsTakingSnapshot", {CLEAR_ON_MANAGER_START, JSON}},
     {"Offroad_NeosUpdate", {CLEAR_ON_MANAGER_START, JSON}},
     {"Offroad_NoFirmware", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, JSON}},
@@ -233,6 +233,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
 
     {"AutoNaviSpeedCtrlEnd", {PERSISTENT, INT, "7"}},
     {"AutoNaviSpeedCtrlMode", {PERSISTENT, INT, "2"}},
+    {"VehicleSpeedCameraControlMode", {PERSISTENT, INT, "1"}},
+    {"VehicleSpeedCameraDistanceTime", {PERSISTENT, INT, "60"}},
     {"AutoRoadSpeedLimitOffset", {PERSISTENT, INT, "-1"}},
     {"AutoNaviSpeedBumpTime", {PERSISTENT, INT, "1"}},
     {"AutoNaviSpeedBumpSpeed", {PERSISTENT, INT, "35"}},

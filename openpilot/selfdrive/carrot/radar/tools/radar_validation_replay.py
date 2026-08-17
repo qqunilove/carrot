@@ -26,6 +26,8 @@ from openpilot.selfdrive.carrot.radar_motion import (
   CUT_IN_BOUNDARY_HOLD_S,
   CUT_IN_CONFIRMATION_S,
   DPathLeadCandidate,
+  DPathStationaryPrimaryHandoffTracker,
+  DPathStationaryShadowTracker,
   DPathLeadTwoTracker,
   FrontRadarKinematicAssociator,
   FRONT_CUT_IN_THRESHOLD,
@@ -47,6 +49,7 @@ from openpilot.selfdrive.carrot.radar_motion import (
   match_dpath_primary_lead,
   prefer_front_radar_kinematics,
   radar_motion_sensitivity,
+  stationary_shadow_corner_supported,
   model_path_point_at_s,
   project_to_model_path,
   visible_motion_points,
@@ -86,8 +89,11 @@ VALIDATION_MOTION_MODES = ("normal", "front")
 VALIDATION_DEFAULT_SENSITIVITY = 3
 LEAD_ONE_RADAR_RGB = (246, 142, 55)
 LEAD_ONE_VISION_RGB = (72, 145, 255)
+LEAD_ONE_VISION_WEAK_RGB = (104, 205, 255)
+LEAD_ONE_VISION_INACTIVE_RGB = (112, 145, 160)
 LEAD_TWO_RGB = (245, 211, 72)
-VISION_LEAD_DISPLAY_MIN_PROBABILITY = 0.40
+VISION_LEAD_DISPLAY_MIN_PROBABILITY = 0.20
+VISION_LEAD_STRONG_DISPLAY_MIN_PROBABILITY = 0.40
 VALIDATION_SENSITIVITY_LABELS = (
   "사용 안 함",
   "둔감",
@@ -129,6 +135,38 @@ class ModelLead:
   x_std: float
   y_std: float
   v_std: float
+
+
+def vision_lead_rgb(probability: float) -> tuple[int, int, int]:
+  return (
+    LEAD_ONE_VISION_RGB
+    if float(probability) >= VISION_LEAD_STRONG_DISPLAY_MIN_PROBABILITY
+    else LEAD_ONE_VISION_WEAK_RGB
+  )
+
+
+def vision_lead_display_value(
+  vision: ModelLead | None,
+) -> tuple[str, tuple[int, int, int], float | None]:
+  if vision is None:
+    return "--", LEAD_ONE_VISION_INACTIVE_RGB, None
+  probability = float(vision.probability)
+  distance = float(vision.x - RADAR_TO_CAMERA)
+  if (
+    probability >= VISION_LEAD_DISPLAY_MIN_PROBABILITY
+    and math.isfinite(distance)
+    and 0.0 <= distance <= DEFAULT_FORWARD_RANGE_M
+  ):
+    return (
+      f"{distance:.1f}m p{probability:.2f}",
+      vision_lead_rgb(probability),
+      distance,
+    )
+  return (
+    f"-- p{probability:.2f}",
+    LEAD_ONE_VISION_INACTIVE_RGB,
+    None,
+  )
 
 
 @dataclass(frozen=True)
@@ -519,7 +557,10 @@ def vision_lead_continuity_segments(
         current = []
       continue
     point = (frame.time_s, float(distance), float(lead.probability))
-    if current and point[0] - current[-1][0] > 0.15:
+    if current and (
+      point[0] - current[-1][0] > 0.15
+      or vision_lead_rgb(point[2]) != vision_lead_rgb(current[-1][2])
+    ):
       segments.append(tuple(current))
       current = []
     current.append(point)
@@ -1085,6 +1126,11 @@ class RadarMotionShadowSelector:
     selections: list[Selection] = []
     front_kinematic_associator = FrontRadarKinematicAssociator()
     lead_two_tracker = DPathLeadTwoTracker()
+    stationary_shadow_tracker = DPathStationaryShadowTracker()
+    stationary_primary_handoff_tracker = (
+      DPathStationaryPrimaryHandoffTracker()
+    )
+    primary_cut_out_predictor = RadarMotionPredictor()
     decision_tracker = RadarMotionDecisionTracker(
       threshold=self.decision_threshold,
       confirmation_s=self.motion_sensitivity.confirmation_s,
@@ -1099,6 +1145,26 @@ class RadarMotionShadowSelector:
         frame, self.motion_sensor,
       )
       all_aligned_points = radar_points_at_model_time(frame)
+      front_motion_points = tuple(
+        point for point in all_aligned_points
+        if point.source == "frontRadar"
+      )
+      primary_cut_out_predictions = primary_cut_out_predictor.update(
+        frame.time_s,
+        front_motion_points,
+        frame.path,
+        frame.v_ego,
+      )
+      primary_track_id = (
+        int(lead_one.get("radarTrackId", -1))
+        if lead_one is not None and lead_one.get("radar")
+        else -1
+      )
+      primary_cut_out_probability = max((
+        float(prediction.cut_out_probability)
+        for prediction in primary_cut_out_predictions.values()
+        if prediction.track_id == primary_track_id
+      ), default=0.0)
       front_kinematic_matches = front_kinematic_associator.update(
         all_aligned_points,
       )
@@ -1273,6 +1339,88 @@ class RadarMotionShadowSelector:
           ),
           confirmed_cutin=confirmed_cutin,
         ))
+      stationary_primary_candidates = []
+      for point in selected_points:
+        if not point.source.startswith("corner"):
+          continue
+        d_path = project_to_model_path(
+          frame.path, point.d_rel, point.y_rel,
+        ).d_path
+        stationary_primary_candidates.append(DPathLeadCandidate(
+          lead=lead_from_radar_point(point, d_path, 0.03, 0.0),
+          source=point.source,
+          track_id=point.track_id,
+          continuity_id=0,
+          retainable=True,
+          confirmed_cutin=False,
+        ))
+      stationary_primary_handoff = (
+        stationary_primary_handoff_tracker.update(
+          frame.time_s,
+          lead_one,
+          stationary_primary_candidates,
+          active_identity,
+        )
+      )
+      if (
+        stationary_primary_handoff is not None
+        and not any(
+          candidate.identity == stationary_primary_handoff.identity
+          for candidate in lead_candidates
+        )
+      ):
+        lead_candidates.append(stationary_primary_handoff)
+      stationary_shadow_inputs = []
+      for point in visible_motion_points(
+        front_motion_points, frame.path, None,
+      ):
+        identity = (point.source, point.track_id, 0)
+        retained_stationary_shadow = active_identity == identity
+        corner_supported = stationary_shadow_corner_supported(
+          point, all_aligned_points, frame.path,
+        )
+        if (
+          point.radar_track_state < 2
+          or not (corner_supported or retained_stationary_shadow)
+        ):
+          continue
+        d_path = project_to_model_path(
+          frame.path, point.d_rel, point.y_rel,
+        ).d_path
+        lead = lead_from_radar_point(
+          point, d_path, 0.03, primary_cut_out_probability,
+        )
+        candidate = DPathLeadCandidate(
+          lead=lead,
+          source=point.source,
+          track_id=point.track_id,
+          continuity_id=0,
+          retainable=True,
+          confirmed_cutin=False,
+        )
+        if corner_supported:
+          stationary_shadow_inputs.append(candidate)
+        if (
+          retained_stationary_shadow
+          and point.track_id != primary_track_id
+        ):
+          lead_candidates.append(candidate)
+      stationary_shadow = stationary_shadow_tracker.update(
+        frame.time_s,
+        lead_one,
+        primary_cut_out_probability,
+        stationary_shadow_inputs,
+      )
+      if (
+        stationary_shadow is not None
+        and stationary_shadow.confirmed_stationary_shadow
+        and stationary_shadow.track_id != primary_track_id
+        and not any(
+          candidate.identity == stationary_shadow.identity
+          for candidate in lead_candidates
+        )
+      ):
+        lead_candidates.append(stationary_shadow)
       if (
         active_identity is not None
         and not any(
@@ -3035,7 +3183,11 @@ class SimulatorUI:
         rgb = (
           lead_one_rgb(segment[0][2])
           if is_lead_one
-          else LEAD_TWO_RGB if is_lead_one is False else LEAD_ONE_VISION_RGB
+          else (
+            LEAD_TWO_RGB
+            if is_lead_one is False
+            else vision_lead_rgb(segment[0][2])
+          )
         )
         color = self._color(rgb)
         previous = None
@@ -3053,17 +3205,8 @@ class SimulatorUI:
     )
     frame = self.frames[self.index]
     vision = frame.model_leads[0] if frame.model_leads else None
-    vision_distance = vision.x - RADAR_TO_CAMERA if vision is not None else None
-    visible_vision = (
-      vision
-      if (
-        vision is not None
-        and vision.probability >= VISION_LEAD_DISPLAY_MIN_PROBABILITY
-        and vision_distance is not None
-        and math.isfinite(vision_distance)
-        and 0.0 <= vision_distance <= DEFAULT_FORWARD_RANGE_M
-      )
-      else None
+    vision_value, vision_rgb, vision_distance = vision_lead_display_value(
+      vision,
     )
     lead_values = (
       (
@@ -3102,23 +3245,18 @@ class SimulatorUI:
           3.5,
           self._color(rgb),
         )
-    vision_value = (
-      f"{vision_distance:.1f}m p{visible_vision.probability:.2f}"
-      if visible_vision is not None and vision_distance is not None
-      else "--"
-    )
     self._draw_text(
       f"V {vision_value}",
       legend_x,
       int(rect.y + 7.0),
       12,
-      self._color(LEAD_ONE_VISION_RGB),
+      self._color(vision_rgb),
     )
-    if visible_vision is not None and vision_distance is not None:
+    if vision_distance is not None:
       rl.draw_circle_v(
         position(self.playback_time, vision_distance),
         3.5,
-        self._color(LEAD_ONE_VISION_RGB),
+        self._color(vision_rgb),
       )
     cursor_x = plot_left + self.playback_time / total * plot_width
     rl.draw_line(
@@ -3882,6 +4020,8 @@ __all__ = (
   "validation_review_events",
   "validation_settings_path",
   "vision_lead_continuity_segments",
+  "vision_lead_display_value",
+  "vision_lead_rgb",
 )
 
 
