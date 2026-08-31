@@ -64,6 +64,47 @@ def test_wide_camera_fallback_setting_is_exposed(settings, params):
   assert '{"UseWideCamera", {PERSISTENT, BOOL, "1"}}' in params_keys
 
 
+def test_vehicle_navi_can_control_is_opt_in(settings, params):
+  by_name = {p["name"]: p for p in params}
+  control = by_name["VehicleNaviCanControl"]
+  assert (control["min"], control["max"], control["default"]) == (0, 1, 0)
+  assert control["control"] == "toggle"
+  assert control["risk"] == "high"
+
+  driving = next(category for category in settings["menu"] if category["id"] == "DRIVING")
+  speed = next(group for group in driving["groups"] if group["id"] == "SPEED")
+  camera = next(group for group in speed["groups"] if group["id"] == "SPEED_CAMERA")
+  assert "VehicleNaviCanControl" in camera["params"]
+
+  params_keys = PARAMS_KEYS_PATH.read_text(encoding="utf-8")
+  assert '{"VehicleNaviCanControl", {PERSISTENT, BOOL, "0"}}' in params_keys
+
+
+def test_vehicle_navi_school_zone_control_is_opt_in(settings, params):
+  by_name = {p["name"]: p for p in params}
+  control = by_name["VehicleNaviSchoolZoneControl"]
+  assert (control["min"], control["max"], control["default"]) == (0, 1, 0)
+  assert control["control"] == "toggle"
+  assert control["risk"] == "high"
+
+  driving = next(category for category in settings["menu"] if category["id"] == "DRIVING")
+  speed = next(group for group in driving["groups"] if group["id"] == "SPEED")
+  camera = next(group for group in speed["groups"] if group["id"] == "SPEED_CAMERA")
+  assert "VehicleNaviSchoolZoneControl" in camera["params"]
+
+  params_keys = PARAMS_KEYS_PATH.read_text(encoding="utf-8")
+  assert '{"VehicleNaviSchoolZoneControl", {PERSISTENT, BOOL, "0"}}' in params_keys
+
+
+def test_vehicle_navi_curve_control_settings_are_removed(settings):
+  driving = next(category for category in settings["menu"] if category["id"] == "DRIVING")
+  speed = next(group for group in driving["groups"] if group["id"] == "SPEED")
+  curve = next(group for group in speed["groups"] if group["id"] == "SPEED_CURVE")
+  assert not any(name.startswith("VehicleNaviCurve") for name in curve["params"])
+  params_keys = PARAMS_KEYS_PATH.read_text(encoding="utf-8")
+  assert "VehicleNaviCurve" not in params_keys
+
+
 def test_tpms_position_setting_matches_device_support(params):
   by_name = {p["name"]: p for p in params}
   show_tpms = by_name["ShowTpms"]
@@ -152,42 +193,21 @@ def test_cluster_camera_preference_is_in_brightness_and_view(settings, params):
   assert '{"ShowCameraWithCluster", {PERSISTENT, INT, "0"}}' in params_keys
 
 
-def test_carrot_radar_mode_replaces_removed_model_mode(settings, params):
+def test_carrot_radar_is_fixed_without_mode_or_sensitivity(settings, params):
   by_name = {p["name"]: p for p in params}
-  assert "RadarLeadModelMode" not in by_name
-  assert "RadarDPathMode" not in by_name
-  assert "RadarMotionMode" not in by_name
-  assert (by_name["CarrotRadarMode"]["min"], by_name["CarrotRadarMode"]["max"]) == (0, 1)
-  assert by_name["CarrotRadarMode"]["default"] == 0
-  assert by_name["CarrotRadarMode"]["control"] == "toggle"
-  assert by_name["CarrotRadarMode"]["risk"] == "high"
-  assert "재부팅" in by_name["CarrotRadarMode"]["descr"]
-  assert "restart the vehicle" in by_name["CarrotRadarMode"]["edescr"]
-  sensitivity = by_name["CarrotRadarCutInSensitivity"]
-  assert (
-    sensitivity["min"],
-    sensitivity["max"],
-    sensitivity["default"],
-  ) == (0, 5, 3)
-  assert sensitivity["control"] == "select"
-  assert sensitivity["risk"] == "high"
-  assert sensitivity["options"]["ko"] == [
-    "사용 안 함",
-    "둔감",
-    "약간 둔감",
-    "보통",
-    "민감",
-    "아주 민감",
-  ]
-  assert "당근레이더모드 전용" in sensitivity["descr"]
-  assert "only by Carrot Radar Mode" in sensitivity["edescr"]
+  for removed_name in (
+    "RadarLeadModelMode",
+    "RadarDPathMode",
+    "RadarMotionMode",
+    "CarrotRadarMode",
+    "CarrotRadarCutInSensitivity",
+  ):
+    assert removed_name not in by_name
   vehicle = next(category for category in settings["menu"] if category["id"] == "VEHICLE")
   radar = next(group for group in vehicle["groups"] if group["id"] == "VEH_RADAR")
   assert radar["params"] == [
     "EnableRadarTracks",
     "EnableCornerRadar",
-    "CarrotRadarMode",
-    "CarrotRadarCutInSensitivity",
   ]
 
 

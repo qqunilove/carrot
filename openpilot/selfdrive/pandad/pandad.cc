@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bitset>
 #include <cassert>
 #include <cinttypes>
@@ -18,6 +19,7 @@
 #include "common/swaglog.h"
 #include "common/timing.h"
 #include "common/util.h"
+#include "selfdrive/pandad/spi_alert.h"
 #include "system/hardware/hw.h"
 
 #define MAX_IR_PANDA_VAL 50
@@ -25,6 +27,7 @@
 #define SATURATE_IL 1000
 
 ExitHandler do_exit;
+static std::atomic<bool> pandad_is_onroad = false;
 
 bool check_all_connected(const std::vector<Panda *> &pandas) {
   for (Panda *panda : pandas) {
@@ -142,6 +145,69 @@ void can_recv_thread(std::vector<Panda *> pandas) {
   }
 }
 
+void spi_error_report_thread() {
+  util::set_thread_name("pandad_spi_diag");
+  Params params;
+  uint64_t observed_sequence = get_panda_spi_error_sequence();
+  PandaSpiErrorEvent pending_event;
+  bool has_pending_event = false;
+  PandaSpiAlertTracker alert_tracker;
+
+  while (!do_exit) {
+    const uint64_t now_ms = millis_since_boot();
+    const uint64_t current_sequence = get_panda_spi_error_sequence();
+    const bool is_onroad = pandad_is_onroad.load(std::memory_order_relaxed);
+    alert_tracker.update_onroad(is_onroad, now_ms);
+
+    if (!is_onroad) {
+      // Ignore startup/offroad SPI activity and discard an alert candidate when
+      // ignition drops during the confirmation delay.
+      observed_sequence = current_sequence;
+      has_pending_event = false;
+    } else {
+      if (current_sequence != observed_sequence) {
+        const uint64_t event_count = current_sequence - observed_sequence;
+        pending_event = get_latest_panda_spi_error_event();
+        observed_sequence = current_sequence;
+        const bool terminal_failure = pending_event.final_result < 0;
+        if (alert_tracker.observe(now_ms, event_count, terminal_failure)) {
+          has_pending_event = true;
+          LOGW("spi_tmux_candidate_diag: sequence=%" PRIu64 ", events=%" PRIu64
+               ", endpoint=0x%x, first_result=%d, final_result=%d"
+               ", attempts=%u, recoveries=%u, tx_len=%u, max_rx_len=%u, timeout_ms=%u"
+               ", phase=%s, lock_us=%" PRIu64
+               ", turnaround_us=%" PRIu64 ", hack_us=%" PRIu64
+               ", dack_us=%" PRIu64 ", recovery_us=%" PRIu64
+               ", total_us=%" PRIu64 ", recovery_restarts=%u",
+               pending_event.sequence, event_count, pending_event.endpoint,
+               pending_event.result, pending_event.final_result,
+               pending_event.attempts, pending_event.recoveries,
+               pending_event.tx_len, pending_event.max_rx_len,
+               pending_event.timeout_ms, pending_event.phase.c_str(), pending_event.lock_us,
+               pending_event.turnaround_us, pending_event.hack_us, pending_event.dack_us,
+               pending_event.recovery_us, pending_event.total_us, pending_event.recovery_restarts);
+        }
+      }
+
+      if (has_pending_event && alert_tracker.ready(now_ms)) {
+        const std::string pending_reason = params.get("CarrotException");
+        if (pending_reason.empty()) {
+          params.put("CarrotException", "spi_error");
+          LOGW("spi_tmux_trigger: queued CarrotException=spi_error");
+          alert_tracker.mark_capture_requested();
+          has_pending_event = false;
+        } else if (pending_reason == "spi_error") {
+          LOGW("spi_tmux_trigger: coalesced with CarrotException=spi_error");
+          alert_tracker.mark_capture_requested();
+          has_pending_event = false;
+        }
+      }
+    }
+
+    util::sleep_for(100);
+  }
+}
+
 void fill_panda_state(cereal::PandaState::Builder &ps, cereal::PandaState::PandaType hw_type, const health_t &health) {
   ps.setVoltage(health.voltage_pkt);
   ps.setCurrent(health.current_pkt);
@@ -229,19 +295,20 @@ std::optional<bool> send_panda_states(PubMaster *pm, const std::vector<Panda *> 
 
     const std::string panda_serial = panda->hw_serial();
     const std::string log_source = "panda[" + std::to_string(panda_index) + "]";
-    auto [checksum_it, inserted] = spi_checksum_counts.try_emplace(panda_serial, health.spi_checksum_error_count_pkt);
+    const uint16_t spi_checksum_error_count = health.spi_checksum_error_count_pkt;
+    auto [checksum_it, inserted] = spi_checksum_counts.try_emplace(panda_serial, spi_checksum_error_count);
     if (inserted) {
       cloudlog_e(CLOUDLOG_WARNING, log_source.c_str(), __LINE__, __func__,
                  "SPI checksum: serial=%s, total=%u, delta=0, baseline=1",
-                 panda_serial.c_str(), health.spi_checksum_error_count_pkt);
-    } else if (checksum_it->second != health.spi_checksum_error_count_pkt) {
-      const bool reset = health.spi_checksum_error_count_pkt < checksum_it->second;
-      const uint32_t delta = reset ? health.spi_checksum_error_count_pkt :
-                             health.spi_checksum_error_count_pkt - checksum_it->second;
+                 panda_serial.c_str(), spi_checksum_error_count);
+    } else if (checksum_it->second != spi_checksum_error_count) {
+      const bool reset = spi_checksum_error_count < checksum_it->second;
+      const uint32_t delta = reset ? spi_checksum_error_count :
+                             spi_checksum_error_count - checksum_it->second;
       cloudlog_e(CLOUDLOG_WARNING, log_source.c_str(), __LINE__, __func__,
                  "SPI checksum: serial=%s, total=%u, delta=%u, baseline=0, reset=%d",
-                 panda_serial.c_str(), health.spi_checksum_error_count_pkt, delta, reset);
-      checksum_it->second = health.spi_checksum_error_count_pkt;
+                 panda_serial.c_str(), spi_checksum_error_count, delta, reset);
+      checksum_it->second = spi_checksum_error_count;
     }
 
     std::array<can_health_t, PANDA_CAN_CNT> can_health{};
@@ -491,6 +558,8 @@ void pandad_run(std::vector<Panda *> &pandas) {
   std::thread send_thread(can_send_thread, pandas, fake_send);
   // Keep CAN receive cadence independent from slower status and serial work.
   std::thread recv_thread(can_recv_thread, pandas);
+  // Params and tmux notification stay off the latency-sensitive SPI threads.
+  std::thread spi_diag_thread(spi_error_report_thread);
 
   Params params;
   RateKeeper rk("pandad", 100);
@@ -513,6 +582,7 @@ void pandad_run(std::vector<Panda *> &pandas) {
       sm.update(0);
       engaged = sm.allAliveAndValid({"selfdriveState"}) && sm["selfdriveState"].getSelfdriveState().getEnabled();
       is_onroad = params.getBool("IsOnroad");
+      pandad_is_onroad.store(is_onroad, std::memory_order_relaxed);
       process_panda_state(pandas, &pm, engaged, is_onroad, spoofing_started);
       panda_safety.configureSafetyMode(is_onroad);
     }
@@ -548,6 +618,7 @@ void pandad_run(std::vector<Panda *> &pandas) {
 
   recv_thread.join();
   send_thread.join();
+  spi_diag_thread.join();
 }
 
 void pandad_main_thread(std::vector<std::string> serials) {

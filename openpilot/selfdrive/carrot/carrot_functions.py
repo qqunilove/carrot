@@ -8,6 +8,7 @@ from openpilot.common.realtime import DT_MDL
 from openpilot.common.constants import CV
 from openpilot.common.filter_simple import MyMovingAverage
 from openpilot.selfdrive.carrot.t_follow import ramp_t_follow
+from openpilot.selfdrive.carrot.traffic_stop import is_traffic_stop_entry_allowed
 from openpilot.selfdrive.selfdrived.events import Events
 
 EventName = log.OnroadEvent.EventName
@@ -518,8 +519,6 @@ class CarrotPlanner:
 
     if self.myDrivingMode == DrivingMode.High or self.trafficLightDetectMode == 0:
       self.trafficState = TrafficState.off
-    if abs(carstate.steeringAngleDeg) > 20:
-      self.trafficState = TrafficState.off
 
     #self.update_user_control()
     if carstate.gasPressed or carstate.brakePressed:
@@ -581,7 +580,7 @@ class CarrotPlanner:
       self.traffic_starting_count = max(0, self.traffic_starting_count - 1)
       if lead_detected:
         self.xState = XState.lead
-      elif self.trafficState == TrafficState.red and abs(carstate.steeringAngleDeg) < 30 and self.traffic_starting_count == 0:
+      elif self.trafficState == TrafficState.red and is_traffic_stop_entry_allowed(carstate.steeringAngleDeg) and self.traffic_starting_count == 0:
         self.add_event(EventName.trafficStopping)
         self.xState = XState.e2eStop
         self.actual_stop_distance = stop_model_x_rl

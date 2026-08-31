@@ -109,6 +109,44 @@ struct SpiPhaseDiagStats {
 static thread_local SpiAttemptTiming spi_attempt_timing;
 static std::mutex spi_phase_diag_lock;
 static SpiPhaseDiagStats spi_phase_diag[2];
+static std::mutex spi_error_event_lock;
+static PandaSpiErrorEvent latest_spi_error_event;
+static std::atomic<uint64_t> spi_error_event_sequence = 0U;
+
+static void record_panda_spi_error_event(uint8_t endpoint, uint32_t attempt, int result,
+                                         int final_result, uint32_t attempts, uint32_t recoveries,
+                                         uint16_t tx_len, uint16_t max_rx_len, unsigned int timeout_ms,
+                                         const SpiAttemptTiming &timing) {
+  std::lock_guard lk(spi_error_event_lock);
+  latest_spi_error_event.sequence++;
+  latest_spi_error_event.endpoint = endpoint;
+  latest_spi_error_event.attempt = attempt;
+  latest_spi_error_event.result = result;
+  latest_spi_error_event.final_result = final_result;
+  latest_spi_error_event.attempts = attempts;
+  latest_spi_error_event.recoveries = recoveries;
+  latest_spi_error_event.tx_len = tx_len;
+  latest_spi_error_event.max_rx_len = max_rx_len;
+  latest_spi_error_event.timeout_ms = timeout_ms;
+  latest_spi_error_event.phase = spi_failure_phase_name(timing.failure_phase);
+  latest_spi_error_event.lock_us = timing.lock_us;
+  latest_spi_error_event.turnaround_us = timing.turnaround_us;
+  latest_spi_error_event.hack_us = timing.hack_us;
+  latest_spi_error_event.dack_us = timing.dack_us;
+  latest_spi_error_event.recovery_us = timing.recovery_us;
+  latest_spi_error_event.total_us = timing.total_us;
+  latest_spi_error_event.recovery_restarts = timing.recovery_restarts;
+  spi_error_event_sequence.store(latest_spi_error_event.sequence, std::memory_order_release);
+}
+
+PandaSpiErrorEvent get_latest_panda_spi_error_event() {
+  std::lock_guard lk(spi_error_event_lock);
+  return latest_spi_error_event;
+}
+
+uint64_t get_panda_spi_error_sequence() {
+  return spi_error_event_sequence.load(std::memory_order_acquire);
+}
 
 static int spi_phase_diag_index(uint8_t endpoint) {
   if (endpoint == 0x03U) return 0;
@@ -420,6 +458,7 @@ int PandaSpiHandle::spi_transfer_retry(uint8_t endpoint, uint8_t *tx_data, uint1
   uint64_t recovery_max_us = 0U;
   SpiAttemptTiming first_failure_timing = {};
   SpiAttemptTiming last_failure_timing = {};
+  int first_failure_result = 0;
 
   do {
     ret = spi_transfer(endpoint, tx_data, tx_len, rx_data, max_rx_len, timeout);
@@ -432,6 +471,7 @@ int PandaSpiHandle::spi_transfer_retry(uint8_t endpoint, uint8_t *tx_data, uint1
     if (ret < 0) {
       if (total_recoveries == 0U) {
         first_failure_timing = spi_attempt_timing;
+        first_failure_result = ret;
       }
       last_failure_timing = spi_attempt_timing;
       total_recoveries++;
@@ -477,6 +517,11 @@ int PandaSpiHandle::spi_transfer_retry(uint8_t endpoint, uint8_t *tx_data, uint1
 
   // Log after the retry sequence so diagnostics never delay a recovery attempt.
   if (total_recoveries > 0U) {
+    // Publish only after retry completion so alerting can distinguish a recovered
+    // transient from a terminal transfer failure.
+    record_panda_spi_error_event(endpoint, 1U, first_failure_result,
+                                 ret, attempts, total_recoveries,
+                                 tx_len, max_rx_len, timeout, first_failure_timing);
     LOGW("spi_failure_diag: endpoint=0x%x, attempts=%u, final_ret=%d"
          ", hack_nacks=%u, dack_nacks=%u, ack_timeouts=%u, host_checksums=%u"
          ", other_failures=%u, first_phase=%s, last_phase=%s"
